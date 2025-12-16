@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+vnstock
+apscheduler
+python-dotenv
+cachetools>=5.0.0
