@@ -1,5 +1,7 @@
 from fastapi import FastAPI
-from src.controllers import stock_controller
+from fastapi.responses import RedirectResponse
+
+from src.api.v1.stock import router as stock_router
 
 app = FastAPI(
     title="VN Stock API",
@@ -7,9 +9,13 @@ app = FastAPI(
     description="Realtime Vietnam Stock API using vnstock"
 )
 
-# Đăng ký router
-app.include_router(stock_controller.router)
+# API v1
+app.include_router(
+    stock_router,
+    prefix="/api/v1"
+)
 
-@app.get("/")
+# Root → Swagger
+@app.get("/", include_in_schema=False)
 def root():
-    return {"message": "VN Stock API is running"}
+    return RedirectResponse(url="/docs")
