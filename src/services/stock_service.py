@@ -7,56 +7,109 @@ from src.services.strategy_engine import StrategyEngine
 
 
 class StockService:
+    """
+    StockService chịu trách nhiệm:
+    - Lấy dữ liệu từ provider
+    - Normalize & filter dữ liệu
+    - Gọi StrategyEngine khi cần
+
+    ❌ KHÔNG chứa logic trade
+    ❌ KHÔNG phán đoán chiến lược
+    """
+
+    REQUIRED_COLUMNS = ["time", "open", "high", "low", "close", "volume"]
+
     def __init__(self):
         self.provider = VnStockProvider()
+
+    def _validate_dataframe(self, df, symbol: str):
+        """Validate DataFrame has required columns and data"""
+        if df is None or df.empty:
+            return False, f"Không có dữ liệu cho {symbol}"
+        
+        missing_cols = [col for col in self.REQUIRED_COLUMNS if col not in df.columns]
+        if missing_cols:
+            return False, f"Thiếu cột dữ liệu: {', '.join(missing_cols)}"
+        
+        return True, None
 
     # =====================================================
     # 1. SNAPSHOT – GIÁ HIỆN TẠI
     # =====================================================
     def snapshot(self, symbol: str):
         try:
-            df = self.provider.intraday(symbol, limit=1)
-            if df is None or df.empty:
-                return {"error": f"Không có dữ liệu intraday cho {symbol}"}
+            # Get recent ticks and build 1-minute candle
+            df = self.provider.intraday(symbol, limit=100, interval='1T')
+            
+            # Validate trước khi normalize
+            valid, error = self._validate_dataframe(df, symbol)
+            if not valid:
+                return {"error": error}
 
             df = normalize_df_time(df)
-            return df.iloc[-1].to_dict()
+            
+            # Validate lại sau normalize
+            if df.empty:
+                return {"error": f"Không có dữ liệu sau khi normalize cho {symbol}"}
+
+            latest = df.iloc[-1]
+            return {
+                "symbol": symbol,
+                "time": latest["time"].isoformat(),
+                "price": float(latest["close"]),
+                "volume": int(latest["volume"])
+            }
         except Exception as e:
-            return {"error": f"Snapshot error: {e}"}
+            return {"error": f"Snapshot error: {str(e)}"}
 
     # =====================================================
-    # 2. HISTORY – DỮ LIỆU LỊCH SỬ
+    # 2. HISTORY – DỮ LIỆU LỊCH SỬ (CHART)
     # =====================================================
     def history(self, symbol: str, start: str, end: str, interval: str):
         try:
             start_dt, end_dt = normalize_range(start, end)
 
-            # Nếu intraday nhưng khoảng thời gian quá khứ xa thì fallback sang daily
+            # fallback intraday -> daily nếu quá xa
             if interval in ("1m", "1h"):
                 days_diff = (datetime.now().date() - start_dt.date()).days
                 if days_diff > 2:
                     interval = "1d"
 
-            # Nếu intraday thì chỉ lấy trong khung giờ giao dịch
+            # intraday giới hạn giờ giao dịch
             if interval in ("1m", "1h"):
                 start_dt = start_dt.replace(hour=9, minute=0, second=0)
                 end_dt = end_dt.replace(hour=15, minute=0, second=0)
 
-            # Gọi provider
+            # gọi provider
             if interval == "1d":
-                df = self.provider.history(symbol, start_dt.date().isoformat(), end_dt.date().isoformat(), "1d")
+                df = self.provider.history(
+                    symbol,
+                    start_dt.date().isoformat(),
+                    end_dt.date().isoformat(),
+                    "1d"
+                )
             else:
+                # Map interval to pandas resample format
+                interval_map = {
+                    "1m": "1T",
+                    "1h": "1H"
+                }
                 limit = 2000 if interval == "1m" else 1000
-                df = self.provider.intraday(symbol, limit=limit)
+                df = self.provider.intraday(
+                    symbol, 
+                    limit=limit,
+                    interval=interval_map.get(interval, "1T")
+                )
 
-            if df is None or df.empty:
+            # Validate
+            valid, error = self._validate_dataframe(df, symbol)
+            if not valid:
                 return {
                     "symbol": symbol,
                     "interval": interval,
                     "from": start_dt.isoformat(),
                     "to": end_dt.isoformat(),
-                    "records": [],
-                    "note": f"Không có dữ liệu cho {symbol} từ {start_dt} đến {end_dt} (interval={interval})"
+                    "records": []
                 }
 
             df = normalize_df_time(df)
@@ -69,81 +122,102 @@ class StockService:
                 "to": end_dt.isoformat(),
                 "records": df.to_dict("records")
             }
+
         except Exception as e:
-            return {"error": f"History error: {e}"}
+            return {"error": f"History error: {str(e)}"}
 
     # =====================================================
-    # 3. TICK + STRATEGY ENGINE
+    # 3. TICK + STRATEGY ENGINE (TRADE MODE)
     # =====================================================
     def tick(self, symbol: str, start: str, end: str,
-             limit=1000, block_threshold=10000, strategies=None):
+             limit=1000, strategies=None, interval='1T'):
         try:
             start_dt, end_dt = normalize_range(start, end)
 
-            df = self.provider.intraday(symbol, limit=limit)
-            if df is None or df.empty:
-                return {"error": f"Không có dữ liệu intraday cho {symbol}"}
+            df = self.provider.intraday(symbol, limit=limit, interval=interval)
+            
+            # Validate
+            valid, error = self._validate_dataframe(df, symbol)
+            if not valid:
+                return {"error": error}
 
             df = normalize_df_time(df)
             df = filter_by_time(df, start_dt, end_dt)
 
             if df.empty:
-                return {"error": f"No tick data for {symbol} between {start_dt} and {end_dt}"}
-
-            # Phát hiện order block
-            order_blocks = df[df["volume"] >= block_threshold].to_dict("records")
+                return {"error": f"Không có dữ liệu tick cho {symbol} trong khoảng thời gian này"}
 
             result = {
                 "symbol": symbol,
                 "from": start_dt.isoformat(),
                 "to": end_dt.isoformat(),
-                "records": df.to_dict("records"),
-                "order_blocks": order_blocks,
-                "block_threshold": block_threshold
+                "count": len(df),
+                "records": df.to_dict("records")  # ✅ Luôn hiển thị data
             }
 
+            # Run strategies if provided
             if strategies:
-                engine = StrategyEngine(strategies=strategies, block_threshold=block_threshold)
-                result["signals"] = engine.run(df)
+                engine = StrategyEngine(strategies=strategies)
+                signals = engine.run(df)
+                if signals:
+                    result["signals"] = signals
+                else:
+                    result["signals"] = {}
+                    result["signals_note"] = "Không có tín hiệu từ các chiến lược"
 
             return result
+
         except Exception as e:
-            return {"error": f"Tick error: {e}"}
+            return {"error": f"Tick error: {str(e)}"}
 
     # =====================================================
-    # 4. LAST MINUTES – SCALPING MODE (Realtime)
+    # 4. LAST MINUTES – REALTIME SCALPING
     # =====================================================
-    def last_minutes(self, symbol: str, minutes=5, limit=300, strategies=None):
+    def last_minutes(self, symbol: str, minutes=5,
+                     limit=300, strategies=None, interval='1T'):
         try:
             ok, msg = is_market_open(datetime.now())
             if not ok:
                 return {"error": msg}
 
-            df = self.provider.intraday(symbol, limit=limit)
-            if df is None or df.empty:
-                return {"error": f"Không có dữ liệu intraday cho {symbol}"}
+            df = self.provider.intraday(symbol, limit=limit, interval=interval)
+            
+            # Validate
+            valid, error = self._validate_dataframe(df, symbol)
+            if not valid:
+                return {"error": error}
 
             df = normalize_df_time(df)
 
+            if df.empty:
+                return {"error": f"Không có dữ liệu sau normalize cho {symbol}"}
+
             latest_time = df["time"].max()
             start_time = latest_time - timedelta(minutes=minutes)
-
             df = df[df["time"] >= start_time]
 
             if df.empty:
-                return {"error": f"No data for {symbol} in last {minutes} minutes"}
+                return {"error": f"Không có dữ liệu trong {minutes} phút gần nhất"}
 
             result = {
                 "symbol": symbol,
                 "from": start_time.isoformat(),
                 "to": latest_time.isoformat(),
-                "records": df.to_dict("records")
+                "count": len(df),
+                "records": df.to_dict("records")  # ✅ Luôn hiển thị data
             }
 
+            # Run strategies if provided
             if strategies:
                 engine = StrategyEngine(strategies=strategies)
-                result["signals"] = engine.run(df)
+                signals = engine.run(df)
+                if signals:
+                    result["signals"] = signals
+                else:
+                    result["signals"] = {}
+                    result["signals_note"] = "Không có tín hiệu từ các chiến lược"
 
             return result
+
         except Exception as e:
-            return {"error": f"Last minutes error: {e}"}
+            return {"error": f"Last minutes error: {str(e)}"}

@@ -1,175 +1,156 @@
 from fastapi import APIRouter, Query
-from typing import Dict, Any
-
 from src.services.stock_service import StockService
-from src.api.deps import handle_service_error
 
-router = APIRouter(
-    prefix="/stock",
-    tags=["Stock"]
-)
+router = APIRouter()
+service = StockService()
 
-stock_service = StockService()
 
-# =====================================================
-# 1. SNAPSHOT – GIÁ HIỆN TẠI
-# =====================================================
-@router.get(
-    "/live",
-    response_model=Dict[str, Any],
-    summary="📡 Snapshot giá cổ phiếu hiện tại",
-    description="Lấy snapshot mới nhất (giá, khối lượng, thời gian) từ intraday."
-)
-def live(
-    symbol: str = Query(
-        ...,
-        description="Mã cổ phiếu VN",
-        example="FPT"
-    )
+@router.get("/live")
+def get_live(symbol: str = Query(..., description="Mã cổ phiếu")):
+    """
+    📊 Giá realtime hiện tại
+    """
+    return service.snapshot(symbol)
+
+
+@router.get("/history")
+def get_history(
+    symbol: str = Query(..., description="Mã cổ phiếu"),
+    start: str = Query(..., description="Thời gian bắt đầu"),
+    end: str = Query(..., description="Thời gian kết thúc"),
+    interval: str = Query("1d", description="Khung thời gian: 1m, 1h, 1d")
 ):
     """
-    Ví dụ:
-    ```
-    GET /stock/live?symbol=VNM
-    ```
+    📈 Dữ liệu lịch sử (chart)
     """
-    return handle_service_error(
-        stock_service.snapshot(symbol)
-    )
+    return service.history(symbol, start, end, interval)
 
 
-# =====================================================
-# 2. HISTORY – DỮ LIỆU LỊCH SỬ
-# =====================================================
-@router.get(
-    "/history",
-    response_model=Dict[str, Any],
-    summary="📊 Lịch sử giá theo khoảng thời gian",
-    description="Lấy dữ liệu lịch sử theo ngày / phút / giờ."
-)
-def history(
-    symbol: str = Query(
-        ...,
-        example="FPT",
-        description="Mã cổ phiếu"
-    ),
-    start: str = Query(
-        ...,
-        example="2024-01-01",
-        description="Thời gian bắt đầu (YYYY-MM-DD hoặc datetime)"
-    ),
-    end: str = Query(
-        ...,
-        example="2024-01-31",
-        description="Thời gian kết thúc"
-    ),
-    interval: str = Query(
-        "1d",
-        example="1d",
-        description="Khung thời gian: 1d, 1h, 1m"
-    )
+@router.get("/tick")
+def get_tick(
+    symbol: str = Query(..., description="Mã cổ phiếu"),
+    start: str = Query(..., description="Thời gian bắt đầu"),
+    end: str = Query(..., description="Thời gian kết thúc"),
+    limit: int = Query(1000, description="Số lượng tick tối đa"),
+    strategies: str = Query(None, description="Danh sách strategy: order_block, wyckoff, smc"),
+    interval: str = Query("1T", description="Khung nến: 1T (1min), 5T (5min), 15T, 1H")
 ):
     """
-    Ví dụ:
-    ```
-    GET /stock/history?symbol=FPT&start=2024-01-01&end=2024-01-31&interval=1d
-    ```
+    🧠 Tick + Strategy Engine
+    
+    Lấy dữ liệu intraday và chạy chiến lược (Order Block / Wyckoff / SMC).
+    
+    **Luôn trả về:**
+    - `records`: Dữ liệu OHLCV chi tiết
+    - `signals`: Tín hiệu từ các chiến lược (nếu có)
+    - `count`: Số lượng nến
     """
-    return handle_service_error(
-        stock_service.history(symbol, start, end, interval)
+    return service.tick(
+        symbol=symbol,
+        start=start,
+        end=end,
+        limit=limit,
+        strategies=strategies,
+        interval=interval
     )
 
 
-# =====================================================
-# 3. TICK + STRATEGY ENGINE
-# =====================================================
-@router.get(
-    "/tick",
-    response_model=Dict[str, Any],
-    summary="🧠 Tick + Strategy Engine",
-    description="Lấy dữ liệu intraday và chạy chiến lược (Order Block / Wyckoff / SMC)."
-)
-def tick(
-    symbol: str = Query(
-        ...,
-        example="VNM",
-        description="Mã cổ phiếu"
-    ),
-    start: str = Query(
-        ...,
-        example="2024-02-01 09:00:00",
-        description="Thời gian bắt đầu"
-    ),
-    end: str = Query(
-        ...,
-        example="2024-02-01 14:30:00",
-        description="Thời gian kết thúc"
-    ),
-    limit: int = Query(
-        1000,
-        example=1000,
-        description="Số lượng tick tối đa"
-    ),
-    block_threshold: int = Query(
-        10000,
-        example=20000,
-        description="Ngưỡng khối lượng để xác định Order Block"
-    ),
-    strategies: str | None = Query(
-        None,
-        example="order_block,smc",
-        description="Danh sách strategy: order_block, wyckoff, smc"
-    )
+@router.get("/last5min")
+def get_last_5_min(
+    symbol: str = Query(..., description="Mã cổ phiếu"),
+    minutes: int = Query(5, description="Số phút gần nhất"),
+    limit: int = Query(300, description="Số lượng tick tối đa"),
+    strategies: str = Query(None, description="Strategy chạy realtime"),
+    interval: str = Query("1T", description="Khung nến: 1T (1min), 5T (5min)")
 ):
     """
-    Ví dụ:
-    ```
-    GET /stock/tick?symbol=VNM&start=2024-02-01 09:00:00&end=2024-02-01 14:30:00&strategies=order_block,smc
-    ```
+    ⚡ N phút gần nhất (Scalping)
+    
+    Lấy dữ liệu N phút gần nhất + optional Strategy Engine.
+    
+    **Luôn trả về:**
+    - `records`: Dữ liệu OHLCV chi tiết
+    - `signals`: Tín hiệu từ các chiến lược (nếu có)
+    - `count`: Số lượng nến
     """
-    return handle_service_error(
-        stock_service.tick(
+    return service.last_minutes(
+        symbol=symbol,
+        minutes=minutes,
+        limit=limit,
+        strategies=strategies,
+        interval=interval
+    )
+
+
+@router.get("/signals")
+def get_signals_only(
+    symbol: str = Query(..., description="Mã cổ phiếu"),
+    start: str = Query(None, description="Thời gian bắt đầu (VD: 2025-12-17 hoặc 2025-12-17 09:00:00)"),
+    end: str = Query(None, description="Thời gian kết thúc (VD: 2025-12-17 hoặc 2025-12-17 15:00:00)"),
+    strategies: str = Query("order_block,wyckoff,smc", description="Strategies"),
+    limit: int = Query(1000, description="Số lượng tick"),
+    interval: str = Query("5T", description="Khung nến: 1T (1min), 5T (5min), 15T, 1H"),
+    minutes: int = Query(None, description="Hoặc dùng N phút gần nhất (bỏ qua start/end)")
+):
+    """
+    🎯 Chỉ lấy signals (không cần records)
+    
+    **2 cách sử dụng:**
+    
+    1. **Time range** (cho historical): 
+       - `start` và `end` phải có datetime đầy đủ
+       - VD: start=2025-12-17 09:00:00, end=2025-12-17 15:00:00
+    
+    2. **Recent minutes** (cho realtime):
+       - Chỉ cần `minutes` (VD: minutes=10)
+       - Bỏ qua start/end
+    
+    Endpoint tối ưu cho việc chỉ cần tín hiệu giao dịch, không cần raw data
+    """
+    
+    # Mode 1: Use minutes (realtime)
+    if minutes:
+        result = service.last_minutes(
+            symbol=symbol,
+            minutes=minutes,
+            limit=limit,
+            strategies=strategies,
+            interval=interval
+        )
+    # Mode 2: Use time range
+    else:
+        if not start or not end:
+            return {
+                "error": "Cần cung cấp start+end hoặc minutes",
+                "hint": "VD 1: start=2025-12-17 09:00:00&end=2025-12-17 15:00:00",
+                "hint2": "VD 2: minutes=10 (lấy 10 phút gần nhất)"
+            }
+        
+        # Auto-add time if missing
+        if len(start.strip()) == 10:  # Only date
+            start = start.strip() + " 09:00:00"
+        if len(end.strip()) == 10:  # Only date
+            end = end.strip() + " 15:00:00"
+        
+        result = service.tick(
             symbol=symbol,
             start=start,
             end=end,
             limit=limit,
-            block_threshold=block_threshold,
-            strategies=strategies
+            strategies=strategies,
+            interval=interval
         )
-    )
-
-
-# =====================================================
-# 4. LAST 5 MINUTES – SCALPING MODE
-# =====================================================
-@router.get(
-    "/last5min",
-    response_model=Dict[str, Any],
-    summary="⚡ 5 phút gần nhất (Scalping)",
-    description="Lấy tick 5 phút gần nhất + optional Strategy Engine."
-)
-def last_5_min(
-    symbol: str = Query(
-        ...,
-        example="FPT",
-        description="Mã cổ phiếu"
-    ),
-    strategies: str | None = Query(
-        None,
-        example="order_block",
-        description="Strategy chạy realtime"
-    )
-):
-    """
-    Ví dụ:
-    ```
-    GET /stock/last5min?symbol=FPT&strategies=order_block
-    ```
-    """
-    return handle_service_error(
-        stock_service.last_minutes(
-            symbol=symbol,
-            minutes=5,
-            strategies=strategies
-        )
-    )
+    
+    # Return error if any
+    if "error" in result:
+        return result
+    
+    # Return only signals (no records)
+    return {
+        "symbol": result["symbol"],
+        "from": result["from"],
+        "to": result["to"],
+        "count": result["count"],
+        "signals": result.get("signals", {}),
+        "signals_note": result.get("signals_note", "")
+    }
