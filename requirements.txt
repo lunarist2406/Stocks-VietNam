@@ -4,3 +4,4 @@ vnstock
 apscheduler
 python-dotenv
 cachetools>=5.0.0
+pandas-ta

@@ -21,7 +21,17 @@ class StockService:
 
     def __init__(self):
         self.provider = VnStockProvider()
-
+    
+    def intraday(self, symbol, limit=500, interval="5T"):
+        """
+        Proxy intraday từ provider
+        """
+        return self.provider.intraday(
+            symbol=symbol,
+            limit=limit,
+            interval=interval
+        )    
+    
     def _validate_dataframe(self, df, symbol: str):
         """Validate DataFrame has required columns and data"""
         if df is None or df.empty:
@@ -155,15 +165,21 @@ class StockService:
                 "records": df.to_dict("records")  # ✅ Luôn hiển thị data
             }
 
-            # Run strategies if provided
+            # ✅ FIX: Run strategies with new API
             if strategies:
-                engine = StrategyEngine(strategies=strategies)
-                signals = engine.run(df)
-                if signals:
-                    result["signals"] = signals
-                else:
-                    result["signals"] = {}
-                    result["signals_note"] = "Không có tín hiệu từ các chiến lược"
+                try:
+                    engine = StrategyEngine()
+                    signals = engine.run(df=df, strategies=strategies)
+                    
+                    if signals:
+                        result["signals"] = signals
+                    else:
+                        result["signals"] = {}
+                        result["signals_note"] = "Không có tín hiệu từ các chiến lược"
+                        
+                except Exception as e:
+                    print(f"[StockService.tick] Strategy error: {e}")
+                    result["signals"] = {"error": str(e)}
 
             return result
 
@@ -173,12 +189,20 @@ class StockService:
     # =====================================================
     # 4. LAST MINUTES – REALTIME SCALPING
     # =====================================================
-    def last_minutes(self, symbol: str, minutes=5,
-                     limit=300, strategies=None, interval='1T'):
+    def last_minutes(
+        self,
+        symbol: str,
+        minutes=5,
+        limit=300,
+        strategies=None,
+        interval='1T',
+        validate_market_time: bool = False
+    ):
         try:
-            ok, msg = is_market_open(datetime.now())
-            if not ok:
-                return {"error": msg}
+            if validate_market_time:
+                ok, msg = is_market_open(datetime.now())
+                if not ok:
+                    return {"error": msg}
 
             df = self.provider.intraday(symbol, limit=limit, interval=interval)
             
@@ -207,15 +231,21 @@ class StockService:
                 "records": df.to_dict("records")  # ✅ Luôn hiển thị data
             }
 
-            # Run strategies if provided
+            # ✅ FIX: Run strategies with new API
             if strategies:
-                engine = StrategyEngine(strategies=strategies)
-                signals = engine.run(df)
-                if signals:
-                    result["signals"] = signals
-                else:
-                    result["signals"] = {}
-                    result["signals_note"] = "Không có tín hiệu từ các chiến lược"
+                try:
+                    engine = StrategyEngine()
+                    signals = engine.run(df=df, strategies=strategies)
+                    
+                    if signals:
+                        result["signals"] = signals
+                    else:
+                        result["signals"] = {}
+                        result["signals_note"] = "Không có tín hiệu từ các chiến lược"
+                        
+                except Exception as e:
+                    print(f"[StockService.last_minutes] Strategy error: {e}")
+                    result["signals"] = {"error": str(e)}
 
             return result
 

@@ -12,7 +12,8 @@ app = FastAPI(
 # API v1
 app.include_router(
     stock_router,
-    prefix="/api/v1"
+    prefix="/api/v1",
+    tags = ["Stocks"]
 )
 app.include_router(
     trade_router,

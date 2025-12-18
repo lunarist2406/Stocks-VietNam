@@ -55,11 +55,11 @@ def get_tick(
     )
 
 
-@router.get("/last5min")
+@router.get("/lastMin")
 def get_last_5_min(
     symbol: str = Query(..., description="Mã cổ phiếu"),
     minutes: int = Query(5, description="Số phút gần nhất"),
-    limit: int = Query(300, description="Số lượng tick tối đa"),
+    limit: int = Query(10000, description="Số lượng tick tối đa"),
     strategies: str = Query(None, description="Strategy chạy realtime"),
     interval: str = Query("1T", description="Khung nến: 1T (1min), 5T (5min)")
 ):
