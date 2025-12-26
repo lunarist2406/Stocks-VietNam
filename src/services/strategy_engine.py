@@ -1,73 +1,130 @@
 # services/strategy_engine.py
 
-from src.strategies.order_block import OrderBlockStrategy
-from src.strategies.wyckoff import WyckoffStrategy
-from src.strategies.smc import SMCStrategy
-
-STRATEGY_MAP = {
-    "order_block": OrderBlockStrategy,
-    "wyckoff": WyckoffStrategy,
-    "smc": SMCStrategy,
-}
+from src.services.market_state import MarketStateService
+from src.services.signal_builder import SignalBuilder
+from src.strategies.registry import STRATEGY_REGISTRY
 
 
 class StrategyEngine:
     def __init__(self):
-        """Engine không cần strategies lúc khởi tạo"""
-        pass
+        self.market_state_service = MarketStateService()
 
-    def run(self, df, strategies):
-        """
-        Chạy strategies trên DataFrame
-        
-        Args:
-            df: DataFrame với OHLCV data
-            strategies: str hoặc list, ví dụ "smc,order_block,wyckoff"
-        
-        Returns:
-            dict: {strategy_name: {signals: ..., meta: ...}}
-        """
-        # Normalize strategies input
+    def run(self, df, strategies, interval="1T"):
+        # 🔧 NORMALIZE STRATEGIES
         if isinstance(strategies, str):
-            strategies = [s.strip() for s in strategies.split(",") if s.strip()]
-        
-        if not strategies:
-            print("[StrategyEngine] Không có strategies được chỉ định")
-            return {}
+            strategies = [{"name": strategies}]
+        elif isinstance(strategies, list):
+            normalized = []
+            for s in strategies:
+                if isinstance(s, str):
+                    normalized.append({"name": s})
+                elif isinstance(s, dict):
+                    normalized.append(s)
+            strategies = normalized
+
+        market_state = self.market_state_service.analyze(df)
+
+        if not market_state["tradable"]:
+            return {
+                "market_state": market_state,
+                "signal": SignalBuilder.no_trade(
+                    market_state["description"], interval
+                ),
+                "signals": {},
+                "suggestion": {
+                    "try_timeframes": ["5T", "15T", "1H"],
+                    "reason": "1T noise quá lớn"
+                }
+            }
 
         results = {}
 
-        for s in strategies:
-            StrategyClass = STRATEGY_MAP.get(s)
-            
+        for item in strategies:
+            name = item.get("name")
+            if not name:
+                continue
+
+            inputs = item.get("inputs", {})
+            StrategyClass = STRATEGY_REGISTRY.get(name)
+
             if not StrategyClass:
-                print(f"[StrategyEngine] Strategy '{s}' không tồn tại")
                 continue
 
             try:
                 strategy = StrategyClass()
-                output = strategy.apply(df)
-
-                # Bỏ strategy không có signal
-                if not output:
-                    print(f"[StrategyEngine] {s}: output = None")
-                    continue
-                
-                if not output.get("signals"):
-                    print(f"[StrategyEngine] {s}: không có signals")
-                    continue
-
-                results[strategy.name] = {
-                    "signals": output["signals"],
-                    "meta": output.get("meta", {})
-                }
-                
-                print(f"[StrategyEngine] {s}: OK ✓")
-
+                results[name] = strategy.apply(df, inputs)
             except Exception as e:
-                print(f"[StrategyEngine] {s}: ERROR - {e}")
-                import traceback
-                traceback.print_exc()
+                results[name] = {
+                    "signals": [],
+                    "plots": [],
+                    "meta": {
+                        "strategy": name,
+                        "error": str(e),
+                        "count": 0
+                    }
+                }
+
+        final_signal = SignalBuilder.from_strategies(results)
+
+        return {
+            "market_state": market_state,
+            "signal": final_signal,
+            "signals": results
+        }
+    def __init__(self):
+        self.market_state_service = MarketStateService()
+
+    def run(self, df, strategies, interval="1T"):
+        market_state = self.market_state_service.analyze(df)
+
+        results = {}
+
+        # 🚨 MARKET KHÔNG ĐÁNG TRADE
+        if not market_state["tradable"]:
+            return {
+                "market_state": market_state,
+                "signal": SignalBuilder.no_trade(
+                    market_state["description"], interval
+                ),
+                "signals": {},
+                "suggestion": {
+                    "try_timeframes": ["5T", "15T", "1H"],
+                    "reason": "1T noise quá lớn"
+                }
+            }
+
+        # ✅ MARKET OK → CHẠY STRATEGY
+        for item in strategies:
+            name = item.get("name")
+            if not name:
                 continue
 
-        return results
+            inputs = item.get("inputs", {})
+
+
+            StrategyClass = STRATEGY_REGISTRY.get(name)
+            if not StrategyClass:
+                continue
+
+            try:
+                strategy = StrategyClass()
+                results[name] = strategy.apply(df, inputs)
+            except Exception as e:
+                results[name] = {
+                    "signals": [],
+                    "plots": [],
+                    "meta": {
+                        "strategy": name,
+                        "error": str(e),
+                        "count": 0
+                    }
+                }
+
+
+        final_signal = SignalBuilder.from_strategies(results)
+
+        return {
+            "market_state": market_state,
+            "signal": final_signal,
+            "signals": results
+        }

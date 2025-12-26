@@ -8,7 +8,7 @@ load_dotenv()
 class Config:
     # Default values (nếu không truyền query thì dùng giá trị này)
     DEFAULT_SOURCE = os.getenv("DEFAULT_SOURCE", "VCI")
-
+    XNOAPI_KEY = os.getenv("XNOAPI_KEY", "")
     try:
         DEFAULT_LIMIT = int(os.getenv("DEFAULT_LIMIT") or 50)
     except ValueError:

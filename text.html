@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Three.js Morph To Text</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+        #controls {
+            position: absolute;
+            top: 20px; left: 20px;
+            color: white;
+            font-family: sans-serif;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="controls">
+        <h3>Hiệu ứng: Morph To Text</h3>
+        <p>Đang tải font...</p>
+    </div>
+
+    <!-- Import Three.js theo dạng module từ CDN -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+
+        // 1. CÀI ĐẶT CƠ BẢN (Scene, Camera, Renderer)
+        const scene = new THREE.Scene();
+        // Thêm sương mù nhẹ cho có chiều sâu
+        scene.fog = new THREE.FogExp2(0x000000, 0.002);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 50;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Điều khiển chuột
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        // 2. BIẾN TOÀN CỤC
+        let particles;
+        let loadedFont;
+        const particleCount = 20000; // Số lượng hạt tối đa
+
+        // Tạo đối tượng chứa các hạt (ban đầu rỗng)
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        
+        // Khởi tạo các hạt ở vị trí ngẫu nhiên
+        for (let i = 0; i < particleCount * 3; i++) {
+            positions[i] = (Math.random() - 0.5) * 200;
+        }
+        
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        
+        // Tạo vật liệu cho hạt (màu xanh neon)
+        const material = new THREE.PointsMaterial({
+            color: 0x00ffcc,
+            size: 0.2,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending
+        });
+
+        particles = new THREE.Points(geometry, material);
+        scene.add(particles);
+
+        // Mảng chứa vị trí đích (vị trí của chữ) và vị trí hiện tại
+        let currentPositions = [];
+        let targetPositions = [];
+
+        // Khởi tạo mảng vị trí
+        for(let i=0; i<particleCount; i++){
+            currentPositions.push({ x: positions[i*3], y: positions[i*3+1], z: positions[i*3+2] });
+            targetPositions.push({ x: positions[i*3], y: positions[i*3+1], z: positions[i*3+2] });
+        }
+
+        // 3. HÀM TẢI FONT VÀ GỌI HÀM MORPH
+        const loader = new FontLoader();
+        loader.load('https://unpkg.com/three@0.160.0/examples/fonts/helvetiker_bold.typeface.json', function (font) {
+            loadedFont = font;
+            document.querySelector('#controls p').innerText = "Đã tải xong! Click chuột để xoay.";
+            
+            // Gọi hàm tạo chữ
+            morphToText("HELLO\nWORLD");
+            
+            // Sau 3 giây đổi chữ khác
+            setTimeout(() => {
+                morphToText("3D\nWEBSITE");
+                material.color.setHex(0xff0055); // Đổi màu sang đỏ hồng
+            }, 3000);
+        });
+
+        // 4. HÀM CHÍNH: MORPH TO TEXT
+        // Đây là hàm bạn yêu cầu
+        function morphToText(textString) {
+            if (!loadedFont) return;
+
+            // Tạo khung hình học cho chữ
+            const textGeo = new TextGeometry(textString, {
+                font: loadedFont,
+                size: 10,
+                height: 1, // Độ dày chữ
+                curveSegments: 12,
+                bevelEnabled: false
+            });
+
+            textGeo.center(); // Căn giữa chữ
+
+            // Lấy danh sách các điểm (vertices) từ chữ
+            // Mẹo: tăng số lượng điểm bằng cách dùng wireframe hoặc tessellation nếu cần dày hơn
+            const positionAttribute = textGeo.attributes.position;
+            const vertexCount = positionAttribute.count;
+
+            // Cập nhật vị trí đích (Target Positions)
+            for (let i = 0; i < particleCount; i++) {
+                if (i < vertexCount) {
+                    // Nếu hạt nằm trong số lượng điểm của chữ, gán nó vào vị trí chữ
+                    targetPositions[i].x = positionAttribute.getX(i);
+                    targetPositions[i].y = positionAttribute.getY(i);
+                    targetPositions[i].z = positionAttribute.getZ(i);
+                } else {
+                    // Những hạt dư thừa sẽ bay lơ lửng ngẫu nhiên xung quanh
+                    targetPositions[i].x = (Math.random() - 0.5) * 100;
+                    targetPositions[i].y = (Math.random() - 0.5) * 100;
+                    targetPositions[i].z = (Math.random() - 0.5) * 100;
+                }
+            }
+        }
+
+        // 5. VÒNG LẶP ANIMATION
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const positionsAttribute = particles.geometry.attributes.position;
+
+            // Hiệu ứng di chuyển mượt (Linear Interpolation - Lerp)
+            for (let i = 0; i < particleCount; i++) {
+                // Di chuyển vị trí hiện tại về phía vị trí đích 5% mỗi khung hình
+                currentPositions[i].x += (targetPositions[i].x - currentPositions[i].x) * 0.05;
+                currentPositions[i].y += (targetPositions[i].y - currentPositions[i].y) * 0.05;
+                currentPositions[i].z += (targetPositions[i].z - currentPositions[i].z) * 0.05;
+
+                // Cập nhật vào buffer của Three.js
+                positionsAttribute.setXYZ(i, currentPositions[i].x, currentPositions[i].y, currentPositions[i].z);
+            }
+
+            positionsAttribute.needsUpdate = true; // Báo cho Three.js biết cần vẽ lại vị trí
+            
+            // Xoay nhẹ toàn bộ khối hạt
+            particles.rotation.y += 0.002;
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // Xử lý khi resize cửa sổ
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+</html>

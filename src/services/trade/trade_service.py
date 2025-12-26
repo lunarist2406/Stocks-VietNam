@@ -1,5 +1,5 @@
 import pandas as pd
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from src.services.strategy_engine import StrategyEngine
 from src.services.stock_service import StockService
 from src.services.trade.trade_signal_builder import TradeSignalBuilder
@@ -72,7 +72,7 @@ class TradeService:
     def generate_signal(
         self,
         symbol: str,
-        strategies: str,
+        strategies: Union[str, List[str], List[Dict]],
         rr_min: float = 2.0,
         minutes: int = 120,
         interval: str = "1T",
@@ -174,7 +174,7 @@ class TradeService:
     def scan_signals(
         self,
         symbols: List[str],
-        strategies: str,
+        strategies: Union[str, List[str], List[Dict]],
         rr_min: float = 2.0,
         minutes: int = 120,
         interval: str = "1T",
